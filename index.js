@@ -1,100 +1,93 @@
 import express from 'express';
-import { gotScraping } from 'got-scraping';
-import { load as cheerioLoad } from 'cheerio'; // Cara import cheerio yang benar di ESM
-import { CookieJar } from 'tough-cookie';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium-min';
 
 // Inisialisasi Aplikasi Express
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 /**
- * Fungsi inti untuk scraping data LPSE.
+ * Fungsi inti untuk scraping data LPSE menggunakan Puppeteer.
  * @param {number} year - Tahun anggaran yang akan di-scrape.
  * @returns {Promise<object>} - Data tender dalam format JSON.
  */
-// Ganti fungsi scrapeLpseData yang lama dengan yang ini
 async function scrapeLpseData(year) {
-    console.log(`🚀 Memulai proses scraping untuk tahun ${year}...`);
-
-    const baseUrl = 'https://spse.inaproc.id/kemhan';
-    const lelangPageUrl = `${baseUrl}/lelang`;
-    const dataUrl = `${baseUrl}/dt/lelang?tahun=${year}`;
-    const cookieJar = new CookieJar();
-    let responseBody = ''; // Variabel untuk menyimpan body HTML
+    console.log(`🚀 Memulai proses scraping dengan Puppeteer untuk tahun ${year}...`);
+    
+    let browser = null;
 
     try {
-        console.log('   [1/2] Mengambil halaman utama untuk token & cookie...');
-        const response = await gotScraping.get(lelangPageUrl, {
-            cookieJar,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-            }
+        // Meluncurkan browser dengan konfigurasi untuk serverless
+        browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless,
         });
 
-        responseBody = response.body; // Simpan body untuk debugging
-        const $ = cheerioLoad(responseBody);
+        const page = await browser.newPage();
         
-        // Cari elemen script
-        const scriptElement = $("script:contains('authenticityToken')");
+        const baseUrl = 'https://spse.inaproc.id/kemhan';
+        const lelangPageUrl = `${baseUrl}/lelang`;
 
-        // PERIKSA APAKAH ELEMEN DITEMUKAN
-        if (!scriptElement.length) {
-            // Jika tidak ditemukan, lemparkan error dengan isi halaman HTML
-            throw new Error(
-                "Gagal menemukan elemen script 'authenticityToken'. " +
-                "Kemungkinan besar Cloudflare memblokir dengan halaman tantangan. " +
-                "Isi HTML yang diterima: " + responseBody.substring(0, 500) // Ambil 500 karakter pertama
-            );
-        }
-        
-        const tokenMatch = scriptElement.html().match(/authenticityToken = '([a-f0-9]+)';/);
-
-        if (!tokenMatch || !tokenMatch[1]) {
-            throw new Error("Gagal mengekstrak token dari script, meskipun elemen ditemukan.");
-        }
-
-        const token = tokenMatch[1];
-        console.log(`   [1/2] ✔️ Token ditemukan: ${token.substring(0, 10)}...`);
-
-        // ... Sisa kode untuk POST request tetap sama ...
-        console.log('   [2/2] Mengirim request POST untuk mendapatkan data JSON...');
-        const { body: tenderData } = await gotScraping.post(dataUrl, {
-            cookieJar,
-            headers: {
-                'Referer': lelangPageUrl,
-                'X-Requested-With': 'XMLHttpRequest',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-            },
-            form: {
-                'draw': 1,
-                'start': 0,
-                'length': 25,
-                'search[value]': '',
-                'search[regex]': 'false',
-                'authenticityToken': token,
-                'order[0][column]': '1',
-                'order[0][dir]': 'asc'
-            },
-            responseType: 'json'
+        // Step 1: Kunjungi halaman utama. Puppeteer akan otomatis menangani challenge Cloudflare.
+        console.log('   [1/3] Mengunjungi halaman utama dan menunggu Cloudflare...');
+        await page.goto(lelangPageUrl, {
+            waitUntil: 'domcontentloaded' // Tunggu hingga DOM siap
         });
 
-        console.log('✅ Scraping berhasil!');
+        // Step 2: Ambil authenticityToken dari dalam konteks browser
+        console.log('   [2/3] Mengekstrak authenticityToken...');
+        const token = await page.evaluate(() => {
+            const scriptContent = document.body.innerHTML;
+            const match = scriptContent.match(/authenticityToken = '([a-f0-9]+)';/);
+            return match ? match[1] : null;
+        });
+
+        if (!token) {
+            throw new Error('Gagal mengekstrak authenticityToken setelah memuat halaman.');
+        }
+        console.log(`   [2/3] ✔️ Token ditemukan: ${token.substring(0, 10)}...`);
+
+        // Step 3: Kirim request POST dari dalam browser menggunakan fetch()
+        console.log('   [3/3] Mengirim request POST dari dalam browser...');
+        const dataUrl = `${baseUrl}/dt/lelang?tahun=${year}`;
+        
+        const tenderData = await page.evaluate(async (url, authToken) => {
+            const formData = new URLSearchParams();
+            formData.append('draw', '1');
+            formData.append('start', '0');
+            formData.append('length', '25');
+            formData.append('search[value]', '');
+            formData.append('authenticityToken', authToken);
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData.toString()
+            });
+            return response.json();
+        }, dataUrl, token); // Kirim variabel ke dalam page.evaluate
+
+        console.log('✅ Scraping dengan Puppeteer berhasil!');
         return tenderData;
 
     } catch (error) {
-        // Log error yang lebih detail
-        console.error("❌ Terjadi kesalahan pada fungsi scrapeLpseData:", error.message);
-        // Jika error berasal dari got, coba log status code
-        if (error.response) {
-            console.error("   -> Status Code:", error.response.statusCode);
-            console.error("   -> Response Body:", error.response.body.substring(0, 200) + "...");
+        console.error("❌ Terjadi kesalahan pada fungsi scrapeLpseData (Puppeteer):", error.message);
+        throw error; // Lemparkan lagi agar ditangkap oleh endpoint handler
+    } finally {
+        // Pastikan browser selalu ditutup untuk mencegah resource leak
+        if (browser !== null) {
+            await browser.close();
+            console.log('   -> Browser ditutup.');
         }
-        // Lemparkan lagi agar ditangkap oleh endpoint handler
-        throw error;
     }
 }
 
-// Membuat Endpoint API
+// Endpoint API (tidak ada perubahan di sini)
 app.get('/api/scrape', async (req, res) => {
     const year = req.query.year || new Date().getFullYear();
 
@@ -113,17 +106,16 @@ app.get('/api/scrape', async (req, res) => {
         console.error("❌ Terjadi kesalahan pada endpoint /api/scrape:", error.message);
         res.status(500).json({
             success: false,
-            message: "Gagal melakukan scraping.",
+            message: "Gagal melakukan scraping dengan Puppeteer.",
             error: error.message
         });
     }
 });
 
 app.get('/', (req, res) => {
-    res.send('<h2>LPSE Scraper API</h2><p>Gunakan endpoint <strong>/api/scrape?year=2024</strong> untuk mengambil data.</p>');
+    res.send('<h2>LPSE Scraper API (Puppeteer)</h2><p>Gunakan endpoint <strong>/api/scrape?year=2024</strong> untuk mengambil data.</p>');
 });
 
-// Menjalankan server
 app.listen(PORT, () => {
     console.log(`Server berjalan di http://localhost:${PORT}`);
 });

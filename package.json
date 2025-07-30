@@ -10,9 +10,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@sparticuz/chromium-min": "^138.0.2",
     "cheerio": "^1.0.0-rc.12",
     "express": "^4.19.2",
-    "got-scraping": "^4.0.4",
-    "tough-cookie": "^4.1.4"
+    "puppeteer-core": "^24.15.0"
   }
 }
