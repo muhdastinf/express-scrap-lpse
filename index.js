@@ -117,5 +117,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server berjalan di http://localhost:${PORT}`);
+    console.log(`Server fix berjalan di http://localhost:${PORT}`);
 });
