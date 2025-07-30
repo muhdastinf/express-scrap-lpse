@@ -12,6 +12,7 @@ const PORT = process.env.PORT || 3000;
  * @param {number} year - Tahun anggaran yang akan di-scrape.
  * @returns {Promise<object>} - Data tender dalam format JSON.
  */
+// Ganti fungsi scrapeLpseData yang lama dengan yang ini
 async function scrapeLpseData(year) {
     console.log(`🚀 Memulai proses scraping untuk tahun ${year}...`);
 
@@ -19,51 +20,78 @@ async function scrapeLpseData(year) {
     const lelangPageUrl = `${baseUrl}/lelang`;
     const dataUrl = `${baseUrl}/dt/lelang?tahun=${year}`;
     const cookieJar = new CookieJar();
+    let responseBody = ''; // Variabel untuk menyimpan body HTML
 
-    // Step 1: GET request untuk mendapatkan token dan cookie
-    console.log('   [1/2] Mengambil halaman utama untuk token & cookie...');
-    const response = await gotScraping.get(lelangPageUrl, {
-        cookieJar,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    try {
+        console.log('   [1/2] Mengambil halaman utama untuk token & cookie...');
+        const response = await gotScraping.get(lelangPageUrl, {
+            cookieJar,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+            }
+        });
+
+        responseBody = response.body; // Simpan body untuk debugging
+        const $ = cheerioLoad(responseBody);
+        
+        // Cari elemen script
+        const scriptElement = $("script:contains('authenticityToken')");
+
+        // PERIKSA APAKAH ELEMEN DITEMUKAN
+        if (!scriptElement.length) {
+            // Jika tidak ditemukan, lemparkan error dengan isi halaman HTML
+            throw new Error(
+                "Gagal menemukan elemen script 'authenticityToken'. " +
+                "Kemungkinan besar Cloudflare memblokir dengan halaman tantangan. " +
+                "Isi HTML yang diterima: " + responseBody.substring(0, 500) // Ambil 500 karakter pertama
+            );
         }
-    });
+        
+        const tokenMatch = scriptElement.html().match(/authenticityToken = '([a-f0-9]+)';/);
 
-    const $ = cheerioLoad(response.body); // Gunakan fungsi yang sudah di-import
-    const tokenMatch = $("script:contains('authenticityToken')").html().match(/authenticityToken = '([a-f0-9]+)';/);
+        if (!tokenMatch || !tokenMatch[1]) {
+            throw new Error("Gagal mengekstrak token dari script, meskipun elemen ditemukan.");
+        }
 
-    if (!tokenMatch || !tokenMatch[1]) {
-        throw new Error('Gagal menemukan authenticityToken. Situs mungkin telah berubah atau memblokir request.');
+        const token = tokenMatch[1];
+        console.log(`   [1/2] ✔️ Token ditemukan: ${token.substring(0, 10)}...`);
+
+        // ... Sisa kode untuk POST request tetap sama ...
+        console.log('   [2/2] Mengirim request POST untuk mendapatkan data JSON...');
+        const { body: tenderData } = await gotScraping.post(dataUrl, {
+            cookieJar,
+            headers: {
+                'Referer': lelangPageUrl,
+                'X-Requested-With': 'XMLHttpRequest',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+            },
+            form: {
+                'draw': 1,
+                'start': 0,
+                'length': 25,
+                'search[value]': '',
+                'search[regex]': 'false',
+                'authenticityToken': token,
+                'order[0][column]': '1',
+                'order[0][dir]': 'asc'
+            },
+            responseType: 'json'
+        });
+
+        console.log('✅ Scraping berhasil!');
+        return tenderData;
+
+    } catch (error) {
+        // Log error yang lebih detail
+        console.error("❌ Terjadi kesalahan pada fungsi scrapeLpseData:", error.message);
+        // Jika error berasal dari got, coba log status code
+        if (error.response) {
+            console.error("   -> Status Code:", error.response.statusCode);
+            console.error("   -> Response Body:", error.response.body.substring(0, 200) + "...");
+        }
+        // Lemparkan lagi agar ditangkap oleh endpoint handler
+        throw error;
     }
-    const token = tokenMatch[1];
-    console.log(`   [1/2] ✔️ Token ditemukan: ${token.substring(0, 10)}...`);
-
-    // Step 2: Build payload dan kirim POST request
-    const payload = {
-        'draw': 1,
-        'start': 0,
-        'length': 25, // Ambil 25 data pertama sebagai contoh
-        'search[value]': '',
-        'search[regex]': 'false',
-        'authenticityToken': token,
-        'order[0][column]': '1',
-        'order[0][dir]': 'asc'
-    };
-    console.log('   [2/2] Mengirim request POST untuk mendapatkan data JSON...');
-    
-    const { body: tenderData } = await gotScraping.post(dataUrl, {
-        cookieJar,
-        headers: {
-            'Referer': lelangPageUrl,
-            'X-Requested-With': 'XMLHttpRequest',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-        },
-        form: payload,
-        responseType: 'json'
-    });
-
-    console.log('✅ Scraping berhasil!');
-    return tenderData;
 }
 
 // Membuat Endpoint API
