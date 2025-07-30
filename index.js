@@ -113,7 +113,7 @@ app.get('/api/scrape', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('<h2>LPSE Scraper API (Puppeteer)</h2><p>Gunakan endpoint <strong>/api/scrape?year=2024</strong> untuk mengambil data.</p>');
+    res.send('<h2>LPSE Scraper API (Puppeteer)</h2><p>Gunakan endpoint <strong>/api/scrape?year=2024</strong> untuk mengambil data. 12345</p>');
 });
 
 app.listen(PORT, () => {
