@@ -1,0 +1,18 @@
+{
+  "name": "lpse-scraper-api",
+  "version": "1.0.0",
+  "description": "API untuk scrape data LPSE menggunakan Express dan got-scraping",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.19.2",
+    "got-scraping": "^4.0.4",
+    "tough-cookie": "^4.1.4"
+  }
+}
